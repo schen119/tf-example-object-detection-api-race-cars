@@ -18,11 +18,12 @@
 #
 # Modifier: Shen-Chi Chen
 # This script doesn't have a strict that the annotation file path must be the same as the image file
-# All the image informatin is extracted from the annotation XML file
+# The images path are either be extracted from the annotation XML file or assigned by the img_dir
 # Accept the 'JPG 'Image format only 
 #
-# Require input:-- data_dir: where the annotation XML are
+# Require input:-- xml_dir: where the annotation XML are
 #               -- label_map_path: path where the map.pbtxt is
+#               -- img_dir[option]: the img_dir with images. If img_dir isn't given, use the path assigned in xml annotation file  
 #
 # The original can be found here:
 # https://github.com/AndrewCarterUK/tf-example-object-detection-api-race-cars/blob/master/create_pascal_tf_record.py
@@ -31,9 +32,10 @@
 
 Example usage:
     python create_pascal_tf_record_onlyXML.py \
-        --data_dir=/home/user/dit_with_xml \
+        --xml_dir=/home/user/dit_with_xml \
         --output_path=/home/user/pascal.record \
         --label_map_path=/home/user/data/map.pbtxt
+        --img_dir=[option]path with images
 """
 from __future__ import absolute_import
 from __future__ import division
@@ -54,17 +56,19 @@ from object_detection.utils import label_map_util
 
 
 flags = tf.app.flags
-flags.DEFINE_string('data_dir', None, 'Root directory to raw PASCAL VOC dataset.')
+flags.DEFINE_string('xml_dir', None, 'Dir with xml annotaion file')
 flags.DEFINE_string('output_path', None, 'Path to output TFRecord')
 flags.DEFINE_string('label_map_path', None,
                     'Path to label map proto')
 flags.DEFINE_boolean('ignore_difficult_instances', False, 'Whether to ignore '
                      'difficult instances')
+flags.DEFINE_string('img_dir', None, '[option] Dir with images. If no input, use the filed of path in xml annotation file to load image')
 FLAGS = flags.FLAGS
 
 
 def dict_to_tf_example(data,
                        label_map_dict,
+                       img_dir,
                        ignore_difficult_instances=False):
   """Convert XML derived dict to tf.Example proto.
 
@@ -74,8 +78,8 @@ def dict_to_tf_example(data,
   Args:
     data: dict holding PASCAL XML fields for a single image (obtained by
       running dataset_util.recursive_parse_xml_to_dict)
-    image_path: Path to image described by the PASCAL XML file
     label_map_dict: A map from string label names to integers ids.
+    img_dir: path with image [option], if no input will load the image by the path defined in xml file
     ignore_difficult_instances: Whether to skip difficult instances in the
       dataset  (default: False).
 
@@ -85,7 +89,11 @@ def dict_to_tf_example(data,
   Raises:
     ValueError: if the image pointed to by data['filename'] is not a valid JPEG
   """
-  image_path = data['path']
+  if img_dir == None:
+    image_path = data['path']
+  else:
+    image_path = os.path.join(img_dir, data['filename'])
+
   with tf.gfile.GFile(image_path, 'rb') as fid:
     encoded_jpg = fid.read()
   encoded_jpg_io = io.BytesIO(encoded_jpg)
@@ -106,6 +114,9 @@ def dict_to_tf_example(data,
   truncated = []
   poses = []
   difficult_obj = []
+  if not 'object' in data:
+      return None
+
   for obj in data['object']:
     difficult = bool(int(obj['difficult']))
     if ignore_difficult_instances and difficult:
@@ -146,10 +157,10 @@ def dict_to_tf_example(data,
 
 
 def main(_):
-  data_dir = FLAGS.data_dir
+  xml_dir = FLAGS.xml_dir
 
-  if not data_dir:
-    logging.error('Must provide a data directory')
+  if not xml_dir:
+    logging.error('Must provide a xml annotation directory')
     return
 
   output_path = FLAGS.output_path
@@ -164,15 +175,17 @@ def main(_):
     logging.error('Must provide a label map path')
     return
 
+  img_dir = FLAGS.img_dir
+  if not img_dir:
+    logging.warning('No img_dir augment, image will be load from the path assigned in the xml annotation file')
+
   writer = tf.python_io.TFRecordWriter(output_path)
 
   label_map_dict = label_map_util.get_label_map_dict(label_map_path)
 
   logging.info('Reading from data directory.')
 
-  #data_dir_jpg_query = os.path.join(data_dir, '*.jpg')
-  data_dir_xml_query = os.path.join(data_dir, '*.xml')
-
+  data_dir_xml_query = os.path.join(xml_dir, '*.xml')
 
   for idx, annotation_path in enumerate(glob.glob(data_dir_xml_query)):
     if idx % 20 == 0:
@@ -184,10 +197,12 @@ def main(_):
     xml = etree.fromstring(xml_str)
     data = dataset_util.recursive_parse_xml_to_dict(xml)['annotation']
 
-    tf_example = dict_to_tf_example(data, label_map_dict,
+    tf_example = dict_to_tf_example(data, 
+                                    label_map_dict,
+                                    img_dir,
                                     FLAGS.ignore_difficult_instances)
-
-    writer.write(tf_example.SerializeToString())
+    if not tf_example == None:
+        writer.write(tf_example.SerializeToString())
 
   writer.close()
 
