@@ -3,3 +3,5 @@
 /inference/
 /test/*.xml
 /training/
+data/*
+models/*
